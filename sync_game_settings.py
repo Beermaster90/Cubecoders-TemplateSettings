@@ -4,12 +4,12 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import re
 import sys
 
 from ampapi import AMPControllerInstance, APIParams, Bridge
 from ampapi.modules import ActionResultError
 
-MASTER_TEMPLATE_MARKER = "-template-"
 ARKSA_GROUP_KEY = "arksa:stadiacontroller"
 # Per-instance identity/location fields that should not be cloned from master.
 ARKSA_SKIP_NODES = {
@@ -28,6 +28,23 @@ class SafeAMPControllerInstance(AMPControllerInstance):
     # We explicitly close the session in main(), so this no-op avoids warning noise.
     def __del__(self) -> None:
         return
+
+
+def _extract_template_group(friendly_name: str) -> str | None:
+    # Expected pattern example: "Some Name -TEMPLATE ARK-"
+    match = re.search(r"-\s*template\s+([^-]+?)\s*-", friendly_name, flags=re.IGNORECASE)
+    if match is None:
+        return None
+    group = match.group(1).strip()
+    return group or None
+
+
+def _has_destination_group(friendly_name: str, group: str) -> bool:
+    return f"-{group.lower()}-" in friendly_name.lower()
+
+
+def _is_template_instance_friendly(friendly_name: object) -> bool:
+    return _extract_template_group(str(friendly_name)) is not None
 
 
 def _read_config() -> dict[str, str]:
@@ -56,7 +73,7 @@ def _is_ads_instance(module: object, instance_name: object) -> bool:
     return str(module) == "ADS" or str(instance_name).startswith("ADS")
 
 
-def _find_master_template_instance(instances_by_id: dict[str, object]) -> object | None:
+def _find_master_template_instance(instances_by_id: dict[str, object]) -> tuple[object | None, str | None]:
     matches: list[object] = []
     for instance in instances_by_id.values():
         instance_name = str(getattr(instance, "instance_name", ""))
@@ -64,13 +81,15 @@ def _find_master_template_instance(instances_by_id: dict[str, object]) -> object
         if _is_ads_instance(module=module, instance_name=instance_name):
             continue
         friendly_name = str(getattr(instance, "friendly_name", ""))
-        if MASTER_TEMPLATE_MARKER in friendly_name.lower():
+        if _extract_template_group(friendly_name) is not None:
             matches.append(instance)
 
     if not matches:
-        return None
+        return None, None
     matches.sort(key=lambda i: str(getattr(i, "instance_name", "")))
-    return matches[0]
+    selected = matches[0]
+    selected_group = _extract_template_group(str(getattr(selected, "friendly_name", "")))
+    return selected, selected_group
 
 
 def _iter_settings_from_spec(settings_spec: object) -> list[object]:
@@ -120,6 +139,8 @@ def _print_instance_statuses(statuses: object, instances_by_id: dict[str, object
             app_state = getattr(instance, "app_state", "<unknown>")
             if _is_ads_instance(module=module, instance_name=instance_name):
                 continue
+            if _is_template_instance_friendly(friendly_name):
+                continue
             printed += 1
             print(
                 f"- instance_id={instance_id} friendly_name={friendly_name} "
@@ -155,6 +176,8 @@ async def _print_application_statuses(ads: SafeAMPControllerInstance, statuses: 
         instance_name = getattr(instance_obj, "instance_name", "<unknown>")
         module = getattr(instance_obj, "module", "<unknown>")
         if _is_ads_instance(module=module, instance_name=instance_name):
+            continue
+        if _is_template_instance_friendly(friendly_name):
             continue
         app_status = await instance_obj.get_application_status(format_data=True)
         if isinstance(app_status, ActionResultError):
@@ -298,13 +321,21 @@ async def _print_arksa_menu_configuration_settings(
             )
 
 
-async def _discover_arksa_instances(ads: SafeAMPControllerInstance, instances_by_id: dict[str, object]) -> dict[str, object]:
-    print("\nDiscovering ARK SA instances (fail-safe check):")
+async def _discover_arksa_instances(
+    ads: SafeAMPControllerInstance,
+    instances_by_id: dict[str, object],
+    template_group: str,
+) -> dict[str, object]:
+    print("\nDiscovering destination instances (group marker check):")
     arksa: dict[str, object] = {}
     for instance in instances_by_id.values():
         instance_name = getattr(instance, "instance_name", "<unknown>")
+        friendly_name = str(getattr(instance, "friendly_name", ""))
         module = getattr(instance, "module", "<unknown>")
         if _is_ads_instance(module=module, instance_name=instance_name):
+            continue
+        if not _has_destination_group(friendly_name=friendly_name, group=template_group):
+            print(f"- skip {instance_name}: missing destination marker -{template_group}-")
             continue
         if not bool(getattr(instance, "running", False)):
             print(f"- skip {instance_name}: instance unavailable/offline")
@@ -314,15 +345,8 @@ async def _discover_arksa_instances(ads: SafeAMPControllerInstance, instances_by
         if isinstance(instance_obj, ActionResultError):
             print(f"- skip {instance_name}: get_instance failed")
             continue
-        settings_spec = await instance_obj.get_setting_spec(format_data=False)
-        if isinstance(settings_spec, ActionResultError) or not isinstance(settings_spec, dict):
-            print(f"- skip {instance_name}: no settings spec access")
-            continue
-        if ARKSA_GROUP_KEY in settings_spec and isinstance(settings_spec[ARKSA_GROUP_KEY], list):
-            arksa[instance_id] = instance_obj
-            print(f"- ARK SA confirmed: {getattr(instance_obj, 'friendly_name', instance_name)} ({instance_name})")
-        else:
-            print(f"- non-ARK skipped: {getattr(instance_obj, 'friendly_name', instance_name)} ({instance_name})")
+        arksa[instance_id] = instance_obj
+        print(f"- destination confirmed: {getattr(instance_obj, 'friendly_name', instance_name)} ({instance_name})")
     return arksa
 
 
@@ -373,6 +397,14 @@ def _normalize_value(value: object) -> str:
     return text
 
 
+def _application_type(instance_obj: object) -> str:
+    # Prefer app-specific image source (e.g. steam:2399830). Fallback to module.
+    app_type = str(getattr(instance_obj, "display_image_source", "")).strip()
+    if app_type:
+        return app_type
+    return str(getattr(instance_obj, "module", "")).strip()
+
+
 async def _wait_for_application_stop(target: object, timeout_seconds: int = 60, interval_seconds: int = 1) -> bool:
     elapsed = 0
     while elapsed <= timeout_seconds:
@@ -394,13 +426,18 @@ async def _sync_arksa_settings_from_master(
     ads: SafeAMPControllerInstance,
     instances_by_id: dict[str, object],
     master_instance_name: str,
+    template_group: str,
     dry_run: bool,
 ) -> None:
     mode = "DRY RUN" if dry_run else "APPLY"
     print(f"\nSync ARK SA settings from master: {master_instance_name} ({mode})")
-    arksa_instances = await _discover_arksa_instances(ads=ads, instances_by_id=instances_by_id)
+    arksa_instances = await _discover_arksa_instances(
+        ads=ads,
+        instances_by_id=instances_by_id,
+        template_group=template_group,
+    )
     if not arksa_instances:
-        print("- No ARK SA instances discovered. Sync skipped.")
+        print("- No destination instances discovered. Sync skipped.")
         return
 
     master = next(
@@ -429,6 +466,22 @@ async def _sync_arksa_settings_from_master(
         print("- No target ARK SA instances (only master exists).")
         return
     print(f"- Target ARK SA instances: {len(targets)}")
+
+    template_app_type = _application_type(master)
+    mismatches: list[str] = []
+    for target in targets:
+        target_type = _application_type(target)
+        if target_type != template_app_type:
+            mismatches.append(
+                f"- {getattr(target, 'friendly_name', '<unknown>')} "
+                f"({getattr(target, 'instance_name', '<unknown>')}): "
+                f"template_type={template_app_type} target_type={target_type}"
+            )
+    if mismatches:
+        print("\nApplication type mismatch detected. Halting sync.")
+        for line in mismatches:
+            print(line)
+        return
 
     target_reports: list[dict[str, object]] = []
     for target in targets:
@@ -603,14 +656,18 @@ async def main() -> int:
         instances_by_id: dict[str, object] = {
             getattr(instance, "instance_id", ""): instance for instance in instances if getattr(instance, "instance_id", "")
         }
-        master_template = _find_master_template_instance(instances_by_id=instances_by_id)
+        master_template, template_group = _find_master_template_instance(instances_by_id=instances_by_id)
         if master_template is None:
-            print(f"\nMaster template not found. Friendly name must contain '{MASTER_TEMPLATE_MARKER}'.")
+            print("\nMaster template not found. Friendly name must match pattern '-TEMPLATE <GROUP>-'.")
+            return 5
+        if not template_group:
+            print("\nMaster template selected but no template group parsed from friendly name.")
             return 5
         print(
             f"\nMaster template selected: {getattr(master_template, 'friendly_name', '<unknown>')} "
             f"({getattr(master_template, 'instance_name', '<unknown>')})"
         )
+        print(f"Template group: {template_group} (destinations require '-{template_group}-' in friendly name)")
 
         # ADS list of instance statuses
         statuses = await ads.get_instance_statuses(format_data=True)
@@ -634,6 +691,7 @@ async def main() -> int:
             ads=ads,
             instances_by_id=instances_by_id,
             master_instance_name=str(getattr(master_template, "instance_name", "")),
+            template_group=template_group,
             dry_run=args.dry_run,
         )
         return 0
