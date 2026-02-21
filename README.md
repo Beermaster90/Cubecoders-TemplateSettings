@@ -4,6 +4,13 @@ This repo contains two scripts using the AMP API wrapper:
 
 - https://github.com/k8thekat/AMPAPI_Python
 
+## Purpose
+
+This toolset is intended for cluster-style game server fleets where one server is the template source and a marked group of destination servers should stay aligned with it.
+
+- `sync_game_settings.py` syncs game settings from template to destination group servers.
+- `sync_game_schedules.py` syncs schedules/triggers/tasks from template to destination group servers.
+
 ## TL;DR
 
 1. Name template with group marker:
