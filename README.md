@@ -1,80 +1,149 @@
-# AMP ARK SA Settings Sync
+# AMP Game Config Sync
 
-This script uses the AMP API wrapper from:
+This repo contains two scripts using the AMP API wrapper:
 
 - https://github.com/k8thekat/AMPAPI_Python
 
 ## TL;DR
 
-1. Set your master ARK instance **friendly name** to include `-template-` (case-insensitive).
-2. Run dry-run first:
+1. Name template with group marker:
+   - `... -TEMPLATE <GROUP>-`
+2. Name destination servers with:
+   - `... -<GROUP>-`
+3. Run game settings sync:
+   - `./run-game-settings-dry.sh`
+   - `./run-game-settings-apply.sh`
+4. Run game schedule sync:
+   - `./run-game-schedules.sh --dry-run`
+   - `./run-game-schedules.sh`
+
+## Scripts
+
+- `sync_game_settings.py`
+- `sync_game_schedules.py`
+
+Launchers:
+
+- `./run-game-settings-dry.sh`
+- `./run-game-settings-apply.sh`
+- `./run-game-schedules.sh`
+
+## Instance Selection Logic (Both Scripts)
+
+Template discovery and destination targeting are based on **friendly name** markers:
+
+- Template must match: `-TEMPLATE <GROUP>-`
+- Destinations must include: `-<GROUP>-`
+
+Example:
+
+- Template: `Main Server -TEMPLATE PVE-`
+- Destinations: `... -PVE-`
+
+## Game Settings Sync
+
+Script: `sync_game_settings.py`
+
+Run:
 
 ```bash
-./.venv/bin/python update_arkappsettings.py --dry-run
+./run-game-settings-dry.sh
+./run-game-settings-apply.sh
 ```
 
-3. If output looks good, run apply:
+What it does:
 
-```bash
-./.venv/bin/python update_arkappsettings.py
-```
+- Finds template from `-TEMPLATE <GROUP>-`
+- Finds destination instances from `-<GROUP>-`
+- Compares template settings group (`arksa:stadiacontroller`) to each destination
+- Prints per-server aligned vs changed settings
+- Apply mode: stops app, applies diff, starts app
 
-## What this script does
+Safety checks:
 
-`update_arkappsettings.py`:
+- Halts if template app type and destination app type do not match
+  - Uses `display_image_source` (fallback: `module`)
 
-- Connects to AMP with `cc-ampapi`
-- Finds master instance by friendly name containing `-template-`
-- Detects ARK SA instances only (`arksa:stadiacontroller`)
-- Compares master settings to each ARK target
-- Shows per-server report:
-  - settings already aligned
-  - settings requiring update
-- In apply mode: stop target app -> apply diff -> start target app
-
-## Settings intentionally not copied
-
-These remain per-instance and are skipped:
+Not copied intentionally:
 
 - `Meta.GenericModule.SessionName`
 - `Meta.GenericModule.Map`
 - `Meta.GenericModule.CustomMap`
 
-## Forced setting
+Forced value:
 
 - `GenericModule.App.UseRandomAdminPassword = false`
 
-## Dry-run safety
+## Game Schedule Sync
 
-`--dry-run` is read-only. It does **not**:
+Script: `sync_game_schedules.py`
 
-- stop applications
-- apply settings
-- start applications
-
-## Setup from scratch
-
-## 1) Create folder
+Run:
 
 ```bash
-mkdir -p amp-arksa-sync
-cd amp-arksa-sync
+./run-game-schedules.sh --dry-run
+./run-game-schedules.sh
 ```
 
-## 2) Create venv
+What it does:
 
-```bash
-python3 -m venv .venv
-```
+- Uses same template/group marker logic
+- Deletes existing populated triggers on each destination
+- Recreates template triggers and tasks in order
+- Copies full task parameter mappings (messages, waits, backup options, conditions, etc.)
+- Keeps event trigger name as AMP-defined (not renameable by API)
+- Adds replication stamp to interval trigger descriptions:
+  - `... | replicated from <template_instance> <UTC timestamp>`
+- Distributes backup trigger minutes across destination servers
+- Avoids collision with the template backup minute
 
-## 3) Install API package
+Notes:
 
-```bash
-./.venv/bin/python -m pip install --upgrade pip setuptools wheel
-./.venv/bin/pip install cc-ampapi
-```
+- No app stop/start is done by schedule sync
+- `--dry-run` prints planned operations only
 
-## 4) Create account config
+Detailed behavior:
+
+- Template source:
+  - Reads template schedule with raw API data (`format_data=False`) so task parameters are not lost.
+- Trigger types:
+  - Interval triggers are created via `Core/AddIntervalTrigger`.
+  - Event triggers are created via `AddEventTrigger`.
+- Event trigger tasks:
+  - Existing tasks on newly created event triggers are cleared first (prevents task duplication on repeated runs).
+- Task parameter keys:
+  - Parameter keys are remapped to method-consume names where required so AMP stores values correctly.
+  - Example mappings handled: `value_to_check`, `seconds`, `dirty_only`, etc.
+
+Backup scheduling logic:
+
+- Trigger is treated as backup-related if any task method contains `backup`.
+- For backup interval triggers:
+  - Minute is spread across destination servers evenly over the hour.
+  - Template backup minute is excluded from possible destination minutes.
+- This reduces concurrent backup load spikes.
+
+Recommended run flow:
+
+1. Run dry-run first:
+   - `./run-game-schedules.sh --dry-run`
+2. Validate:
+   - Destination list
+   - Trigger delete/create plan
+   - Backup minute plan lines
+3. Apply:
+   - `./run-game-schedules.sh`
+4. Verify in AMP UI:
+   - Interval trigger descriptions include replication stamp
+   - Event trigger task count matches template
+   - Backup trigger minute differs across destination servers
+
+Known limitations:
+
+- Event trigger **description/name** cannot be changed through current AMP API endpoints.
+- Therefore, the event trigger `An update is available via SteamCMD` remains AMP-default text.
+
+## Setup
 
 Create `amp_config.json`:
 
@@ -92,16 +161,10 @@ Optional env overrides:
 - `AMP_USER`
 - `AMP_PASS`
 
-## 5) Run
-
-Dry run:
+Install deps in venv:
 
 ```bash
-./.venv/bin/python update_arkappsettings.py --dry-run
-```
-
-Apply:
-
-```bash
-./.venv/bin/python update_arkappsettings.py
+python3 -m venv .venv
+./.venv/bin/python -m pip install --upgrade pip setuptools wheel
+./.venv/bin/pip install cc-ampapi
 ```

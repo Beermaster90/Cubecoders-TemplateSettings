@@ -45,7 +45,7 @@ def _is_ads_instance(module: object, instance_name: object) -> bool:
 
 
 def _extract_template_group(friendly_name: str) -> str | None:
-    # Expected pattern example: "Some Name -TEMPLATE ARK-"
+    # Expected pattern example: "Some Name -TEMPLATE GROUP-"
     match = re.search(r"-\s*template\s+([^-]+?)\s*-", friendly_name, flags=re.IGNORECASE)
     if match is None:
         return None

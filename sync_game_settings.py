@@ -17,7 +17,7 @@ ARKSA_SKIP_NODES = {
     "Meta.GenericModule.Map",
     "Meta.GenericModule.CustomMap",
 }
-# Force specific config values on all ARK targets.
+# Force specific config values on all destination targets.
 ARKSA_FORCED_NODE_VALUES = {
     "GenericModule.App.UseRandomAdminPassword": "false",
 }
@@ -31,7 +31,7 @@ class SafeAMPControllerInstance(AMPControllerInstance):
 
 
 def _extract_template_group(friendly_name: str) -> str | None:
-    # Expected pattern example: "Some Name -TEMPLATE ARK-"
+    # Expected pattern example: "Some Name -TEMPLATE GROUP-"
     match = re.search(r"-\s*template\s+([^-]+?)\s*-", friendly_name, flags=re.IGNORECASE)
     if match is None:
         return None
@@ -269,9 +269,9 @@ async def _print_arksa_menu_configuration_settings(
     template_meta: object,
 ) -> None:
     template_instance_name = str(getattr(template_meta, "instance_name", "<unknown>"))
-    print(f"\nARK SA menu configuration ({template_instance_name}):")
+    print(f"\nTemplate menu configuration ({template_instance_name}):")
     if not bool(getattr(template_meta, "running", False)):
-        print("- Template instance unavailable/offline; ARK SA menu settings not queried.")
+        print("- Template instance unavailable/offline; menu settings not queried.")
         return
 
     template_id = getattr(template_meta, "instance_id", "")
@@ -290,7 +290,7 @@ async def _print_arksa_menu_configuration_settings(
 
     arksa_settings = settings_spec.get("arksa:stadiacontroller", [])
     if not isinstance(arksa_settings, list) or not arksa_settings:
-        print("- No ARK SA menu settings returned.")
+        print("- No template menu settings returned.")
         return
 
     buckets: dict[str, list[dict]] = {
@@ -430,7 +430,7 @@ async def _sync_arksa_settings_from_master(
     dry_run: bool,
 ) -> None:
     mode = "DRY RUN" if dry_run else "APPLY"
-    print(f"\nSync ARK SA settings from master: {master_instance_name} ({mode})")
+    print(f"\nSync game settings from template: {master_instance_name} ({mode})")
     arksa_instances = await _discover_arksa_instances(
         ads=ads,
         instances_by_id=instances_by_id,
@@ -445,7 +445,7 @@ async def _sync_arksa_settings_from_master(
         None,
     )
     if master is None:
-        print("- Master instance not found in ARK SA set. Sync skipped.")
+        print("- Template instance not found in destination set. Sync skipped.")
         return
 
     master_spec = await master.get_setting_spec(format_data=False)
@@ -454,7 +454,7 @@ async def _sync_arksa_settings_from_master(
         return
     master_arksa_settings = master_spec.get(ARKSA_GROUP_KEY, [])
     if not isinstance(master_arksa_settings, list) or not master_arksa_settings:
-        print("- Master ARK SA settings missing. Sync skipped.")
+        print("- Template settings group missing. Sync skipped.")
         return
 
     master_values = _build_master_arksa_value_map(master_arksa_settings)
@@ -463,9 +463,9 @@ async def _sync_arksa_settings_from_master(
 
     targets = [inst for inst in arksa_instances.values() if getattr(inst, "instance_name", "") != master_instance_name]
     if not targets:
-        print("- No target ARK SA instances (only master exists).")
+        print("- No target destination instances (only template exists).")
         return
-    print(f"- Target ARK SA instances: {len(targets)}")
+    print(f"- Target destination instances: {len(targets)}")
 
     template_app_type = _application_type(master)
     mismatches: list[str] = []
@@ -508,7 +508,7 @@ async def _sync_arksa_settings_from_master(
                     "target": target,
                     "name": target_name,
                     "friendly": target_friendly,
-                    "error": "target has no ARK SA group at apply time",
+                    "error": "target has no matching settings group at apply time",
                     "same": {},
                     "diff": {},
                 }
@@ -619,11 +619,11 @@ async def _sync_arksa_settings_from_master(
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Query and sync AMP ARK SA settings.")
+    parser = argparse.ArgumentParser(description="Query and sync AMP game settings.")
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Show what settings would change on ARK targets without stopping or updating instances.",
+        help="Show what settings would change on destination targets without stopping or updating instances.",
     )
     return parser.parse_args()
 
