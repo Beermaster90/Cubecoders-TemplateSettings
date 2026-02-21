@@ -10,10 +10,11 @@ This repo contains two scripts using the AMP API wrapper:
    - `... -TEMPLATE <GROUP>-`
 2. Name destination servers with:
    - `... -<GROUP>-`
-3. Run game settings sync:
-   - `./run-game-settings-dry.sh`
-   - `./run-game-settings-apply.sh`
-4. Run game schedule sync:
+3. Intended for ARK SA cluster setups; may work elsewhere, but verify manually.
+4. Run game settings sync:
+   - `./run-game-settings.sh --dry-run`
+   - `./run-game-settings.sh`
+5. Run game schedule sync:
    - `./run-game-schedules.sh --dry-run`
    - `./run-game-schedules.sh`
 
@@ -24,8 +25,7 @@ This repo contains two scripts using the AMP API wrapper:
 
 Launchers:
 
-- `./run-game-settings-dry.sh`
-- `./run-game-settings-apply.sh`
+- `./run-game-settings.sh`
 - `./run-game-schedules.sh`
 
 ## Instance Selection Logic (Both Scripts)
@@ -47,8 +47,8 @@ Script: `sync_game_settings.py`
 Run:
 
 ```bash
-./run-game-settings-dry.sh
-./run-game-settings-apply.sh
+./run-game-settings.sh --dry-run
+./run-game-settings.sh
 ```
 
 What it does:
