@@ -10,11 +10,14 @@ This repo contains two scripts using the AMP API wrapper:
    - `... -TEMPLATE <GROUP>-`
 2. Name destination servers with:
    - `... -<GROUP>-`
-3. Intended for ARK SA cluster setups; may work elsewhere, but verify manually.
-4. Run game settings sync:
+3. Purpose:
+   - `sync_game_settings.py`: replicate game settings from template to destination group servers
+   - `sync_game_schedules.py`: replicate schedules/triggers/tasks from template to destination group servers
+4. Intended for ARK SA cluster setups; may work elsewhere, but verify manually.
+5. Run game settings sync:
    - `./run-game-settings.sh --dry-run`
    - `./run-game-settings.sh`
-5. Run game schedule sync:
+6. Run game schedule sync:
    - `./run-game-schedules.sh --dry-run`
    - `./run-game-schedules.sh`
 
