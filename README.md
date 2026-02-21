@@ -30,6 +30,21 @@ This toolset is intended for cluster-style game server fleets where one server i
    - `./run-game-schedules.sh --dry-run`
    - `./run-game-schedules.sh`
 
+## Installation
+
+Choose one:
+
+1. Copy files manually from this folder
+   - Copy these files to your target API folder:
+     - `sync_game_settings.py`
+     - `sync_game_schedules.py`
+     - `run-game-settings.sh`
+     - `run-game-schedules.sh`
+     - `README.md`
+2. Clone the repo directly
+   - `git clone <repo-url>`
+   - `cd <repo-folder>`
+
 ## Scripts
 
 - `sync_game_settings.py`
