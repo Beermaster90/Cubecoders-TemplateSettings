@@ -8,8 +8,10 @@ This repo contains two scripts using the AMP API wrapper:
 
 1. Name template with group marker:
    - `... -TEMPLATE <GROUP>-`
+   - Example: `ARK Island -TEMPLATE ARK-`
 2. Name destination servers with:
    - `... -<GROUP>-`
+   - Example: `ARK Lost Colony -ARK-`
 3. Purpose:
    - `sync_game_settings.py`: replicate game settings from template to destination group servers
    - `sync_game_schedules.py`: replicate schedules/triggers/tasks from template to destination group servers
