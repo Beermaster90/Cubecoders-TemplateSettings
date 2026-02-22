@@ -396,6 +396,15 @@ def _build_writable_node_current_values(settings_spec: dict) -> dict[str, str]:
 
 def _normalize_value(value: object) -> str:
     text = str(value).strip()
+    # Normalize JSON/Python-style list formatting (e.g. ['a','b'] vs ["a", "b"]).
+    if text.startswith("[") and text.endswith("]"):
+        candidate = text.replace("'", "\"")
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, list):
+                return json.dumps(parsed, separators=(",", ":"), ensure_ascii=False)
+        except Exception:
+            pass
     lower = text.lower()
     if lower in {"true", "false"}:
         return lower
@@ -425,6 +434,83 @@ async def _wait_for_application_stop(target: object, timeout_seconds: int = 60, 
         await asyncio.sleep(interval_seconds)
         elapsed += interval_seconds
     return False
+
+
+def _state_text(status: object) -> str:
+    app_state = getattr(status, "app_state", None)
+    state = getattr(status, "state", None)
+    raw = app_state if app_state is not None else state
+    return str(raw).strip().lower()
+
+
+def _is_transition_state(state_text: str) -> bool:
+    return any(token in state_text for token in ("starting", "stopping", "restarting"))
+
+
+async def _wait_until_not_transitioning(target: object, timeout_seconds: int = 90, interval_seconds: int = 1) -> bool:
+    elapsed = 0
+    while elapsed <= timeout_seconds:
+        status = await target.get_instance_status()
+        if not isinstance(status, ActionResultError):
+            if not _is_transition_state(_state_text(status)):
+                return True
+        await asyncio.sleep(interval_seconds)
+        elapsed += interval_seconds
+    return False
+
+
+async def _wait_for_application_running(target: object, timeout_seconds: int = 120, interval_seconds: int = 2) -> bool:
+    elapsed = 0
+    while elapsed <= timeout_seconds:
+        status = await target.get_instance_status()
+        if not isinstance(status, ActionResultError):
+            if bool(getattr(status, "running", False)):
+                return True
+        await asyncio.sleep(interval_seconds)
+        elapsed += interval_seconds
+    return False
+
+
+async def _restart_or_start_instance(target: object, friendly: str, name: str) -> bool:
+    is_running: bool | None = None
+    app_status = None
+    try:
+        app_status = await target.get_application_status(format_data=True)
+    except Exception:
+        app_status = None
+
+    if app_status is not None and not isinstance(app_status, ActionResultError):
+        app_state = str(getattr(app_status, "state", "")).strip().lower()
+        if "stopped" in app_state or "sleeping" in app_state or "failed" in app_state:
+            is_running = False
+        elif "ready" in app_state or "starting" in app_state or "restarting" in app_state:
+            is_running = True
+        elif "stopping" in app_state:
+            print(f"- {friendly} ({name}): app is stopping, skipping lifecycle action this pass")
+            return False
+        else:
+            is_running = bool(getattr(app_status, "running", False))
+
+    if is_running is None:
+        status = await target.get_instance_status()
+        if isinstance(status, ActionResultError):
+            print(f"- {friendly} ({name}): could not determine status before restart/start")
+            return False
+        is_running = bool(getattr(status, "running", False))
+
+    if is_running:
+        restart_res = await target.restart_application(format_data=False)
+        if isinstance(restart_res, ActionResultError):
+            print(f"- {friendly} ({name}): restart failed: {restart_res}")
+            return False
+        print(f"- {friendly} ({name}): restart requested")
+    else:
+        start_res = await target.start_application(format_data=False)
+        if isinstance(start_res, ActionResultError):
+            print(f"- {friendly} ({name}): start failed: {start_res}")
+            return False
+        print(f"- {friendly} ({name}): start requested")
+    return True
 
 
 async def _sync_arksa_settings_from_master(
@@ -597,14 +683,30 @@ async def _sync_arksa_settings_from_master(
         name = str(report["name"])
         friendly = str(report["friendly"])
         print(f"\nApplying changes: {friendly} ({name})")
-        if bool(getattr(target, "running", False)):
+        ready = await _wait_until_not_transitioning(target=target, timeout_seconds=120, interval_seconds=1)
+        if not ready:
+            print("- instance still transitioning, skipping apply")
+            continue
+
+        status = await target.get_instance_status()
+        if isinstance(status, ActionResultError):
+            print(f"- get_instance_status failed: {status}")
+            continue
+
+        is_running_now = bool(getattr(status, "running", False))
+        if is_running_now:
             stop_res = await target.stop_application()
             if isinstance(stop_res, ActionResultError):
                 print(f"- stop failed: {stop_res}")
                 continue
+            print("- stop requested")
+            stopped = await _wait_for_application_stop(target=target, timeout_seconds=120, interval_seconds=1)
+            if not stopped:
+                print("- timeout waiting for stop, skipping apply")
+                continue
             print("- application stopped")
         else:
-            print("- application already stopped")
+            print("- application already stopped (verified)")
 
         apply_res = await target.set_configs(data=diff, format_data=False)
         if isinstance(apply_res, ActionResultError):
@@ -612,11 +714,18 @@ async def _sync_arksa_settings_from_master(
             continue
         print(f"- updated settings count: {len(diff)}")
 
-        start_res = await target.start_application(format_data=False)
-        if isinstance(start_res, ActionResultError):
-            print(f"- start failed: {start_res}")
+    print("\nEnsuring target server lifecycle (start if stopped / restart if running):")
+    for report in target_reports:
+        if report["error"] is not None:
             continue
-        print("- application start requested")
+        target = report["target"]
+        name = str(report["name"])
+        friendly = str(report["friendly"])
+        await _restart_or_start_instance(target=target, friendly=friendly, name=name)
+
+    master_friendly = str(getattr(master, "friendly_name", master_instance_name))
+    print(f"\nTemplate server restart/start: {master_friendly} ({master_instance_name})")
+    await _restart_or_start_instance(target=master, friendly=master_friendly, name=master_instance_name)
 
 
 def _parse_args() -> argparse.Namespace:
