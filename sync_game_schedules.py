@@ -251,7 +251,7 @@ async def _load_template_interval_details(template_obj: object, template_trigger
     if isinstance(timed, ActionResultError) or not isinstance(timed, dict):
         return None
 
-    def _int_list(items: object, default: list[int]) -> list[int]:
+    def _int_list(items: object, default: list[int], allow_empty: bool = False) -> list[int]:
         if not isinstance(items, list):
             return list(default)
         parsed: list[int] = []
@@ -261,6 +261,8 @@ async def _load_template_interval_details(template_obj: object, template_trigger
             except (TypeError, ValueError):
                 continue
         if not parsed:
+            if allow_empty:
+                return []
             return list(default)
         # Keep order while removing duplicates.
         seen: set[int] = set()
@@ -277,7 +279,7 @@ async def _load_template_interval_details(template_obj: object, template_trigger
         "days": _int_list(timed.get("match_days", []), [0]),
         "hours": _int_list(timed.get("match_hours", []), [0]),
         "minutes": _int_list(timed.get("match_minutes", []), [0]),
-        "days_of_month": _int_list(timed.get("match_days_of_month", []), [1]),
+        "days_of_month": _int_list(timed.get("match_days_of_month", []), [], allow_empty=True),
         "description": str(timed.get("description", _v(template_trigger, "description", "Interval Trigger"))),
     }
 
