@@ -1,6 +1,6 @@
 # AMP Game Config Sync
 
-This repo contains two scripts using the AMP API wrapper:
+This repo contains three scripts using the AMP API wrapper:
 
 - https://github.com/k8thekat/AMPAPI_Python
 
@@ -10,6 +10,7 @@ This toolset is intended for cluster-style game server fleets where one server i
 
 - `sync_game_settings.py` syncs game settings from template to destination group servers.
 - `sync_game_schedules.py` syncs schedules/triggers/tasks from template to destination group servers.
+- `backup_retention.py` lists backups on template and destination group servers.
 
 ## TL;DR
 
@@ -29,6 +30,8 @@ This toolset is intended for cluster-style game server fleets where one server i
 6. Run game schedule sync:
    - `./run-game-schedules.sh --dry-run`
    - `./run-game-schedules.sh`
+7. Run backup retention cleanup:
+   - `./run-backup-retention.sh`
 
 ## Installation
 
@@ -38,8 +41,10 @@ Choose one:
    - Copy these files to your target API folder:
      - `sync_game_settings.py`
      - `sync_game_schedules.py`
+     - `backup_retention.py`
      - `run-game-settings.sh`
      - `run-game-schedules.sh`
+     - `run-backup-retention.sh`
      - `README.md`
 2. Clone the repo directly
    - `git clone <repo-url>`
@@ -49,11 +54,13 @@ Choose one:
 
 - `sync_game_settings.py`
 - `sync_game_schedules.py`
+- `backup_retention.py`
 
 Launchers:
 
 - `./run-game-settings.sh`
 - `./run-game-schedules.sh`
+- `./run-backup-retention.sh`
 
 ## Instance Selection Logic (Both Scripts)
 
@@ -169,6 +176,29 @@ Known limitations:
 
 - Event trigger **description/name** cannot be changed through current AMP API endpoints.
 - Therefore, the event trigger `An update is available via SteamCMD` remains AMP-default text.
+
+## Backup Retention
+
+Script: `backup_retention.py`
+
+Run:
+
+```bash
+./run-backup-retention.sh   # default: cleanup dry-run
+./run-backup-retention.sh cleanup --daily-days 7 --weekly-months 3
+./run-backup-retention.sh cleanup --daily-days 7 --weekly-months 3 --apply
+```
+
+What it does:
+
+- Uses same template/group marker logic
+- Includes template plus destination servers in that group
+- Calls `LocalFileBackupPlugin/GetBackups` on each included instance
+- `list` mode prints sticky backups by default (`--all-backups` to include non-sticky)
+- `cleanup` mode (dry-run by default) applies sticky-only retention:
+  - Keep one sticky backup per day for recent days (`--daily-days`, default `7`)
+  - Then keep one sticky backup per ISO week for older backups (`--weekly-months`, default `3`)
+  - Older sticky backups outside retention are deleted only with `--apply`
 
 ## Setup
 
