@@ -325,6 +325,7 @@ async def _discover_arksa_instances(
     ads: SafeAMPControllerInstance,
     instances_by_id: dict[str, object],
     template_group: str,
+    include_instance_name: str | None = None,
 ) -> dict[str, object]:
     print("\nDiscovering destination instances (group marker check):")
     arksa: dict[str, object] = {}
@@ -332,12 +333,13 @@ async def _discover_arksa_instances(
         instance_name = getattr(instance, "instance_name", "<unknown>")
         friendly_name = str(getattr(instance, "friendly_name", ""))
         module = getattr(instance, "module", "<unknown>")
+        is_included_source = include_instance_name is not None and str(instance_name) == include_instance_name
         if _is_ads_instance(module=module, instance_name=instance_name):
             continue
-        if not _has_destination_group(friendly_name=friendly_name, group=template_group):
+        if not is_included_source and not _has_destination_group(friendly_name=friendly_name, group=template_group):
             print(f"- skip {instance_name}: missing destination marker -{template_group}-")
             continue
-        if not bool(getattr(instance, "running", False)):
+        if not is_included_source and not bool(getattr(instance, "running", False)):
             print(f"- skip {instance_name}: instance unavailable/offline")
             continue
         instance_id = getattr(instance, "instance_id", "")
@@ -346,7 +348,10 @@ async def _discover_arksa_instances(
             print(f"- skip {instance_name}: get_instance failed")
             continue
         arksa[instance_id] = instance_obj
-        print(f"- destination confirmed: {getattr(instance_obj, 'friendly_name', instance_name)} ({instance_name})")
+        if is_included_source:
+            print(f"- source template included: {getattr(instance_obj, 'friendly_name', instance_name)} ({instance_name})")
+        else:
+            print(f"- destination confirmed: {getattr(instance_obj, 'friendly_name', instance_name)} ({instance_name})")
     return arksa
 
 
@@ -435,6 +440,7 @@ async def _sync_arksa_settings_from_master(
         ads=ads,
         instances_by_id=instances_by_id,
         template_group=template_group,
+        include_instance_name=master_instance_name,
     )
     if not arksa_instances:
         print("- No destination instances discovered. Sync skipped.")
@@ -597,11 +603,6 @@ async def _sync_arksa_settings_from_master(
                 print(f"- stop failed: {stop_res}")
                 continue
             print("- application stopped")
-            stopped = await _wait_for_application_stop(target=target, timeout_seconds=60, interval_seconds=1)
-            if not stopped:
-                print("- timeout waiting for application to stop (60s), skipping apply")
-                continue
-            print("- confirmed stopped")
         else:
             print("- application already stopped")
 
