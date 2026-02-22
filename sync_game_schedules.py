@@ -251,21 +251,33 @@ async def _load_template_interval_details(template_obj: object, template_trigger
     if isinstance(timed, ActionResultError) or not isinstance(timed, dict):
         return None
 
-    def _first_int(items: object, default: int) -> int:
-        if isinstance(items, list) and items:
+    def _int_list(items: object, default: list[int]) -> list[int]:
+        if not isinstance(items, list):
+            return list(default)
+        parsed: list[int] = []
+        for item in items:
             try:
-                return int(items[0])
+                parsed.append(int(item))
             except (TypeError, ValueError):
-                return default
-        return default
+                continue
+        if not parsed:
+            return list(default)
+        # Keep order while removing duplicates.
+        seen: set[int] = set()
+        ordered_unique: list[int] = []
+        for value in parsed:
+            if value in seen:
+                continue
+            seen.add(value)
+            ordered_unique.append(value)
+        return ordered_unique
 
-    # ampapi currently exposes EditIntervalTrigger with single int values, so use first matched value.
     return {
-        "months": _first_int(timed.get("match_months", []), 1),
-        "days": _first_int(timed.get("match_days", []), 0),
-        "hours": _first_int(timed.get("match_hours", []), 0),
-        "minutes": _first_int(timed.get("match_minutes", []), 0),
-        "days_of_month": _first_int(timed.get("match_days_of_month", []), 1),
+        "months": _int_list(timed.get("match_months", []), [1]),
+        "days": _int_list(timed.get("match_days", []), [0]),
+        "hours": _int_list(timed.get("match_hours", []), [0]),
+        "minutes": _int_list(timed.get("match_minutes", []), [0]),
+        "days_of_month": _int_list(timed.get("match_days_of_month", []), [1]),
         "description": str(timed.get("description", _v(template_trigger, "description", "Interval Trigger"))),
     }
 
@@ -322,11 +334,11 @@ async def _clear_trigger_tasks(target_obj: object, trigger_id: str) -> None:
 async def _add_interval_trigger_raw(target_obj: object, interval_cfg: dict[str, Any]) -> object | ActionResultError:
     # Raw endpoint required for IntervalTrigger creation.
     params = {
-        "months": [int(interval_cfg["months"])],
-        "days": [int(interval_cfg["days"])],
-        "hours": [int(interval_cfg["hours"])],
-        "minutes": [int(interval_cfg["minutes"])],
-        "daysOfMonth": [int(interval_cfg["days_of_month"])],
+        "months": [int(v) for v in interval_cfg["months"]],
+        "days": [int(v) for v in interval_cfg["days"]],
+        "hours": [int(v) for v in interval_cfg["hours"]],
+        "minutes": [int(v) for v in interval_cfg["minutes"]],
+        "daysOfMonth": [int(v) for v in interval_cfg["days_of_month"]],
         "description": str(interval_cfg["description"]),
     }
     return await target_obj._call_api(api="Core/AddIntervalTrigger", parameters=params)
@@ -374,7 +386,8 @@ async def _sync_schedule_for_target(
             template_minute = 0
             interval_cfg = await _load_template_interval_details(template_obj, template_trigger)
             if interval_cfg is not None:
-                template_minute = int(interval_cfg["minutes"])
+                template_minutes = list(interval_cfg.get("minutes", []) or [0])
+                template_minute = int(template_minutes[0]) if template_minutes else 0
             planned_minute = _distributed_minute_avoiding(
                 index=target_index,
                 total=target_total,
@@ -420,16 +433,31 @@ async def _sync_schedule_for_target(
                 run_stamp=run_stamp,
             )
             if _trigger_has_backup_task(template_trigger):
-                old_minutes = int(interval_cfg["minutes"])
+                old_minutes_list = list(interval_cfg.get("minutes", []) or [0])
+                old_minute = int(old_minutes_list[0]) if old_minutes_list else 0
                 new_minutes = _distributed_minute_avoiding(
                     index=target_index,
                     total=target_total,
-                    blocked_minute=old_minutes,
+                    blocked_minute=old_minute,
                 )
-                interval_cfg["minutes"] = new_minutes
+                updated_minutes = list(old_minutes_list) if old_minutes_list else [old_minute]
+                if updated_minutes:
+                    updated_minutes[0] = new_minutes
+                else:
+                    updated_minutes = [new_minutes]
+                # Keep order while removing duplicates after replacement.
+                seen_minutes: set[int] = set()
+                deduped_minutes: list[int] = []
+                for minute_value in updated_minutes:
+                    int_value = int(minute_value)
+                    if int_value in seen_minutes:
+                        continue
+                    seen_minutes.add(int_value)
+                    deduped_minutes.append(int_value)
+                interval_cfg["minutes"] = deduped_minutes
                 print(
                     f"  - backup interval minute adjusted for spread: "
-                    f"{trigger_desc} {old_minutes:02d} -> {new_minutes:02d} "
+                    f"{trigger_desc} {old_minute:02d} -> {new_minutes:02d} "
                     f"(template minute blocked)"
                 )
             create_result = await _add_interval_trigger_raw(target_obj=target_obj, interval_cfg=interval_cfg)
