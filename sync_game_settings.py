@@ -683,30 +683,6 @@ async def _sync_arksa_settings_from_master(
         name = str(report["name"])
         friendly = str(report["friendly"])
         print(f"\nApplying changes: {friendly} ({name})")
-        ready = await _wait_until_not_transitioning(target=target, timeout_seconds=120, interval_seconds=1)
-        if not ready:
-            print("- instance still transitioning, skipping apply")
-            continue
-
-        status = await target.get_instance_status()
-        if isinstance(status, ActionResultError):
-            print(f"- get_instance_status failed: {status}")
-            continue
-
-        is_running_now = bool(getattr(status, "running", False))
-        if is_running_now:
-            stop_res = await target.stop_application()
-            if isinstance(stop_res, ActionResultError):
-                print(f"- stop failed: {stop_res}")
-                continue
-            print("- stop requested")
-            stopped = await _wait_for_application_stop(target=target, timeout_seconds=120, interval_seconds=1)
-            if not stopped:
-                print("- timeout waiting for stop, skipping apply")
-                continue
-            print("- application stopped")
-        else:
-            print("- application already stopped (verified)")
 
         apply_res = await target.set_configs(data=diff, format_data=False)
         if isinstance(apply_res, ActionResultError):
