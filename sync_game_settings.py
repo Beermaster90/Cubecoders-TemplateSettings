@@ -471,7 +471,7 @@ async def _wait_for_application_running(target: object, timeout_seconds: int = 1
     return False
 
 
-async def _restart_or_start_instance(target: object, friendly: str, name: str) -> bool:
+async def _stop_then_start_instance(target: object, friendly: str, name: str) -> bool:
     is_running: bool | None = None
     app_status = None
     try:
@@ -486,30 +486,50 @@ async def _restart_or_start_instance(target: object, friendly: str, name: str) -
         elif "ready" in app_state or "starting" in app_state or "restarting" in app_state:
             is_running = True
         elif "stopping" in app_state:
-            print(f"- {friendly} ({name}): app is stopping, skipping lifecycle action this pass")
-            return False
+            print(f"- {friendly} ({name}): app is stopping, waiting for stop before start")
+            if not await _wait_for_application_stop(target=target):
+                print(f"- {friendly} ({name}): timed out waiting for app to stop")
+                return False
+            is_running = False
         else:
             is_running = bool(getattr(app_status, "running", False))
 
     if is_running is None:
         status = await target.get_instance_status()
         if isinstance(status, ActionResultError):
-            print(f"- {friendly} ({name}): could not determine status before restart/start")
+            print(f"- {friendly} ({name}): could not determine status before stop/start")
             return False
+        if _is_transition_state(_state_text(status)):
+            print(f"- {friendly} ({name}): waiting for existing transition to settle")
+            if not await _wait_until_not_transitioning(target=target):
+                print(f"- {friendly} ({name}): timed out waiting for transition to settle")
+                return False
+            status = await target.get_instance_status()
+            if isinstance(status, ActionResultError):
+                print(f"- {friendly} ({name}): could not determine status after waiting")
+                return False
         is_running = bool(getattr(status, "running", False))
 
     if is_running:
-        restart_res = await target.restart_application(format_data=False)
-        if isinstance(restart_res, ActionResultError):
-            print(f"- {friendly} ({name}): restart failed: {restart_res}")
+        stop_res = await target.stop_application()
+        if isinstance(stop_res, ActionResultError):
+            print(f"- {friendly} ({name}): stop failed: {stop_res}")
             return False
-        print(f"- {friendly} ({name}): restart requested")
-    else:
-        start_res = await target.start_application(format_data=False)
-        if isinstance(start_res, ActionResultError):
-            print(f"- {friendly} ({name}): start failed: {start_res}")
+        print(f"- {friendly} ({name}): stop requested")
+        if not await _wait_for_application_stop(target=target):
+            print(f"- {friendly} ({name}): timed out waiting for app to stop")
             return False
-        print(f"- {friendly} ({name}): start requested")
+        print(f"- {friendly} ({name}): stop confirmed")
+
+    start_res = await target.start_application(format_data=False)
+    if isinstance(start_res, ActionResultError):
+        print(f"- {friendly} ({name}): start failed: {start_res}")
+        return False
+    print(f"- {friendly} ({name}): start requested")
+    if not await _wait_for_application_running(target=target):
+        print(f"- {friendly} ({name}): timed out waiting for app to start")
+        return False
+    print(f"- {friendly} ({name}): start confirmed")
     return True
 
 
@@ -690,18 +710,18 @@ async def _sync_arksa_settings_from_master(
             continue
         print(f"- updated settings count: {len(diff)}")
 
-    print("\nEnsuring target server lifecycle (start if stopped / restart if running):")
+    print("\nEnsuring target server lifecycle (stop/start for running servers, start for stopped servers):")
     for report in target_reports:
         if report["error"] is not None:
             continue
         target = report["target"]
         name = str(report["name"])
         friendly = str(report["friendly"])
-        await _restart_or_start_instance(target=target, friendly=friendly, name=name)
+        await _stop_then_start_instance(target=target, friendly=friendly, name=name)
 
     master_friendly = str(getattr(master, "friendly_name", master_instance_name))
-    print(f"\nTemplate server restart/start: {master_friendly} ({master_instance_name})")
-    await _restart_or_start_instance(target=master, friendly=master_friendly, name=master_instance_name)
+    print(f"\nTemplate server stop/start: {master_friendly} ({master_instance_name})")
+    await _stop_then_start_instance(target=master, friendly=master_friendly, name=master_instance_name)
 
 
 def _parse_args() -> argparse.Namespace:
