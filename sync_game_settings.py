@@ -15,8 +15,12 @@ BACKUP_GROUP_KEYWORDS = ("backup", "local", "cloud", "s3")
 # Per-instance identity/location fields that should not be cloned from master.
 ARKSA_SKIP_NODES = {
     "Meta.GenericModule.SessionName",
+    "GenericModule.SessionName",
+    "GenericModule.ServerName",
     "Meta.GenericModule.Map",
+    "GenericModule.Map",
     "Meta.GenericModule.CustomMap",
+    "GenericModule.CustomMap",
 }
 # Force specific config values on all destination targets.
 ARKSA_FORCED_NODE_VALUES = {
@@ -362,7 +366,7 @@ def _build_master_arksa_value_map(arksa_settings: list[dict]) -> dict[str, str]:
         if not isinstance(item, dict):
             continue
         node = str(item.get("node", "")).strip()
-        if not node or node in ARKSA_SKIP_NODES:
+        if not node or _should_skip_node(node):
             continue
         if bool(item.get("read_only", False)):
             continue
@@ -419,7 +423,7 @@ def _build_master_value_map(group_items: list[dict], skip_nodes: set[str] | None
         if not isinstance(item, dict):
             continue
         node = str(item.get("node", "")).strip()
-        if not node or node in skipped:
+        if not node or node in skipped or _should_skip_node(node):
             continue
         if bool(item.get("read_only", False)):
             continue
@@ -450,6 +454,21 @@ def _build_writable_node_current_values(settings_spec: dict) -> dict[str, str]:
                 continue
             values[node] = str(item.get("current_value", ""))
     return values
+
+
+def _should_skip_node(node: str) -> bool:
+    normalized = node.strip()
+    if not normalized:
+        return True
+    if normalized in ARKSA_SKIP_NODES:
+        return True
+    lower = normalized.lower()
+    return (
+        lower.endswith(".sessionname")
+        or lower.endswith(".servername")
+        or lower.endswith(".custommap")
+        or lower.endswith(".map")
+    )
 
 
 def _normalize_value(value: object) -> str:
@@ -705,7 +724,11 @@ async def _sync_arksa_settings_from_master(
 
         target_current_values = _build_writable_node_current_values(target_spec)
         target_allowed_nodes = set(target_current_values.keys())
-        payload_all = {node: value for node, value in master_values.items() if node in target_allowed_nodes}
+        payload_all = {
+            node: value
+            for node, value in master_values.items()
+            if node in target_allowed_nodes and not _should_skip_node(node)
+        }
         for forced_node, forced_value in ARKSA_FORCED_NODE_VALUES.items():
             if forced_node in target_allowed_nodes:
                 payload_all[forced_node] = forced_value
