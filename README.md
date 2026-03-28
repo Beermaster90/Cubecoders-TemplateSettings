@@ -61,6 +61,7 @@ Launchers:
 - `./run-game-settings.sh`
 - `./run-game-schedules.sh`
 - `./run-backup-retention.sh`
+- `./run-clear-old-backups-keep-latest.sh`
 
 ## Instance Selection Logic (Both Scripts)
 
@@ -90,8 +91,9 @@ What it does:
 - Finds template from `-TEMPLATE <GROUP>-`
 - Finds destination instances from `-<GROUP>-`
 - Compares template settings group (`arksa:stadiacontroller`) to each destination
+- Also includes detected backup-related settings groups for local/cloud backup configuration when present
 - Prints per-server aligned vs changed settings
-- Apply mode: stops app, applies diff, starts app
+- Apply mode: applies diffs, then restarts only servers with game-setting changes
 
 Safety checks:
 
@@ -107,6 +109,13 @@ Not copied intentionally:
 Forced value:
 
 - `GenericModule.App.UseRandomAdminPassword = false`
+
+Backup settings notes:
+
+- Backup-related settings are auto-detected from the template setting spec using group/key metadata
+- Intended to catch backup configuration exposed in AMP local/cloud tabs
+- Dry-run/apply output prints which backup settings groups were included
+- Backup-only changes do not trigger a server restart
 
 ## Game Schedule Sync
 
@@ -198,7 +207,31 @@ What it does:
 - `cleanup` mode (dry-run by default) applies sticky-only retention:
   - Keep one sticky backup per day for recent days (`--daily-days`, default `7`)
   - Then keep one sticky backup per ISO week for older backups (`--weekly-months`, default `3`)
-  - Older sticky backups outside retention are deleted only with `--apply`
+- Older sticky backups outside retention are deleted only with `--apply`
+
+## Keep Latest Backup Only
+
+Script: `clear_old_backups_keep_latest.py`
+
+Run:
+
+```bash
+./run-clear-old-backups-keep-latest.sh
+./run-clear-old-backups-keep-latest.sh --apply
+```
+
+What it does:
+
+- Uses same template/group marker logic
+- Includes the template plus destination servers in that group
+- Loads backups from each included instance
+- Keeps the newest backup on each instance
+- Deletes all older backups only with `--apply`
+
+Notes:
+
+- Default mode is dry-run
+- If a backup exists both locally and remotely, the script deletes both copies
 
 ## Setup
 

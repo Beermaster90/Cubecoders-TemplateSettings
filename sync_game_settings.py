@@ -11,6 +11,7 @@ from ampapi import AMPControllerInstance, APIParams, Bridge
 from ampapi.modules import ActionResultError
 
 ARKSA_GROUP_KEY = "arksa:stadiacontroller"
+BACKUP_GROUP_KEYWORDS = ("backup", "local", "cloud", "s3")
 # Per-instance identity/location fields that should not be cloned from master.
 ARKSA_SKIP_NODES = {
     "Meta.GenericModule.SessionName",
@@ -377,6 +378,63 @@ def _build_master_arksa_value_map(arksa_settings: list[dict]) -> dict[str, str]:
     return values
 
 
+def _group_looks_backup_related(group_key: object, items: object) -> bool:
+    key = str(group_key).strip().lower()
+    if any(keyword in key for keyword in BACKUP_GROUP_KEYWORDS):
+        return True
+    if not isinstance(items, list):
+        return False
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        texts = (
+            str(item.get("node", "")).strip().lower(),
+            str(item.get("name", "")).strip().lower(),
+            str(item.get("category", "")).strip().lower(),
+            str(item.get("subcategory", "")).strip().lower(),
+        )
+        if any("backup" in text for text in texts):
+            return True
+        if any("cloud" in text for text in texts):
+            return True
+        if any("local" in text for text in texts):
+            return True
+        if any("s3" in text for text in texts):
+            return True
+    return False
+
+
+def _discover_backup_group_keys(settings_spec: dict) -> list[str]:
+    keys: list[str] = []
+    for group_key, items in settings_spec.items():
+        if _group_looks_backup_related(group_key=group_key, items=items):
+            keys.append(str(group_key))
+    return keys
+
+
+def _build_master_value_map(group_items: list[dict], skip_nodes: set[str] | None = None) -> dict[str, str]:
+    values: dict[str, str] = {}
+    skipped = skip_nodes or set()
+    for item in group_items:
+        if not isinstance(item, dict):
+            continue
+        node = str(item.get("node", "")).strip()
+        if not node or node in skipped:
+            continue
+        if bool(item.get("read_only", False)):
+            continue
+        raw = item.get("current_value")
+        if raw is None:
+            continue
+        if isinstance(raw, bool):
+            values[node] = "true" if raw else "false"
+        elif isinstance(raw, (int, float, str)):
+            values[node] = str(raw)
+        else:
+            values[node] = json.dumps(raw, separators=(",", ":"), ensure_ascii=False)
+    return values
+
+
 def _build_writable_node_current_values(settings_spec: dict) -> dict[str, str]:
     values: dict[str, str] = {}
     for group_items in settings_spec.values():
@@ -569,9 +627,27 @@ async def _sync_arksa_settings_from_master(
         print("- Template settings group missing. Sync skipped.")
         return
 
-    master_values = _build_master_arksa_value_map(master_arksa_settings)
+    master_game_values = _build_master_arksa_value_map(master_arksa_settings)
+    backup_group_keys = _discover_backup_group_keys(master_spec)
+    backup_values: dict[str, str] = {}
+    for group_key in backup_group_keys:
+        group_items = master_spec.get(group_key, [])
+        if not isinstance(group_items, list):
+            continue
+        backup_values.update(_build_master_value_map(group_items))
+    master_values = dict(master_game_values)
+    master_values.update(backup_values)
+    master_game_nodes = set(master_game_values.keys()) | {
+        node for node in ARKSA_FORCED_NODE_VALUES.keys() if node in master_values or node == "GenericModule.App.UseRandomAdminPassword"
+    }
+
     print(f"- Master settings candidates: {len(master_values)}")
     print(f"- Explicitly skipped nodes: {len(ARKSA_SKIP_NODES)}")
+    if backup_group_keys:
+        print(f"- Backup settings groups included: {', '.join(sorted(backup_group_keys))}")
+        print(f"- Backup settings candidates: {len(backup_values)}")
+    else:
+        print("- Backup settings groups included: none detected")
 
     targets = [inst for inst in arksa_instances.values() if getattr(inst, "instance_name", "") != master_instance_name]
     if not targets:
@@ -633,6 +709,7 @@ async def _sync_arksa_settings_from_master(
         for forced_node, forced_value in ARKSA_FORCED_NODE_VALUES.items():
             if forced_node in target_allowed_nodes:
                 payload_all[forced_node] = forced_value
+                master_game_nodes.add(forced_node)
 
         payload_diff = {
             node: new_value
@@ -644,6 +721,8 @@ async def _sync_arksa_settings_from_master(
             for node, value in payload_all.items()
             if _normalize_value(target_current_values.get(node, "")) == _normalize_value(value)
         }
+        game_diff = {node: value for node, value in payload_diff.items() if node in master_game_nodes}
+        backup_diff = {node: value for node, value in payload_diff.items() if node not in master_game_nodes}
         target_reports.append(
             {
                 "target": target,
@@ -652,6 +731,9 @@ async def _sync_arksa_settings_from_master(
                 "error": None,
                 "same": payload_same,
                 "diff": payload_diff,
+                "game_diff": game_diff,
+                "backup_diff": backup_diff,
+                "restart_required": bool(game_diff),
                 "current": target_current_values,
             }
         )
@@ -680,7 +762,15 @@ async def _sync_arksa_settings_from_master(
             print(f"- {friendly} ({name}): unable to evaluate ({error})")
             continue
         assert isinstance(diff, dict)
-        print(f"- {friendly} ({name}): {len(diff)} setting(s) need update")
+        game_diff = report.get("game_diff", {})
+        backup_diff = report.get("backup_diff", {})
+        game_count = len(game_diff) if isinstance(game_diff, dict) else 0
+        backup_count = len(backup_diff) if isinstance(backup_diff, dict) else 0
+        restart_required = bool(report.get("restart_required", False))
+        print(
+            f"- {friendly} ({name}): {len(diff)} setting(s) need update "
+            f"(game={game_count}, backup={backup_count}, restart={'yes' if restart_required else 'no'})"
+        )
         current = report.get("current", {})
         if not isinstance(current, dict):
             current = {}
@@ -710,18 +800,20 @@ async def _sync_arksa_settings_from_master(
             continue
         print(f"- updated settings count: {len(diff)}")
 
-    print("\nEnsuring target server lifecycle (stop/start for running servers, start for stopped servers):")
+    print("\nTarget server lifecycle:")
     for report in target_reports:
         if report["error"] is not None:
+            continue
+        diff = report["diff"]
+        if not isinstance(diff, dict) or not diff:
             continue
         target = report["target"]
         name = str(report["name"])
         friendly = str(report["friendly"])
+        if not bool(report.get("restart_required", False)):
+            print(f"- {friendly} ({name}): restart skipped (backup-only changes or no game-setting changes)")
+            continue
         await _stop_then_start_instance(target=target, friendly=friendly, name=name)
-
-    master_friendly = str(getattr(master, "friendly_name", master_instance_name))
-    print(f"\nTemplate server stop/start: {master_friendly} ({master_instance_name})")
-    await _stop_then_start_instance(target=master, friendly=master_friendly, name=master_instance_name)
 
 
 def _parse_args() -> argparse.Namespace:
