@@ -202,6 +202,8 @@ async def _instance_json(ads: SafeAMPControllerInstance, instance_id: str) -> di
     metrics = getattr(app_status, "metrics", None) if app_status is not None else None
     instance_running = 1 if bool(getattr(instance_status, "running", False)) else 0
     app_running = 1 if _app_state_is_running(app_status) else 0
+    app_status_error_flag = 1 if app_error else 0
+    instance_stuck = 1 if instance_running == 1 and app_running == 0 and not app_error else 0
     return {
         "instance_id": str(getattr(instance_obj, "instance_id", instance_id)),
         "instance_name": str(getattr(instance_obj, "instance_name", "")),
@@ -211,7 +213,8 @@ async def _instance_json(ads: SafeAMPControllerInstance, instance_id: str) -> di
         "instance_state": str(getattr(instance_status, "state", "")),
         "app_running": app_running,
         "app_state": str(getattr(app_status, "state", "")) if app_status is not None else "",
-        "instance_stuck": 1 if instance_running == 1 and app_running == 0 else 0,
+        "app_status_error_flag": app_status_error_flag,
+        "instance_stuck": instance_stuck,
         "active_users": _int(_metric_value(getattr(metrics, "active_users", None), "raw_value", default=0), 0),
         "cpu_percent": _num(_metric_value(getattr(metrics, "cpu_usage", None), "percent", default=0), 0.0),
         "memory_percent": _num(_metric_value(getattr(metrics, "memory_usage", None), "percent", default=0), 0.0),
