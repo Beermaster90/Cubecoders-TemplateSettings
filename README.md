@@ -62,6 +62,7 @@ Launchers:
 - `./run-game-schedules.sh`
 - `./run-backup-retention.sh`
 - `./run-clear-old-backups-keep-latest.sh`
+- `./run-zabbix-amp-status.sh`
 
 ## Instance Selection Logic (Both Scripts)
 
@@ -258,3 +259,61 @@ python3 -m venv .venv
 ./.venv/bin/python -m pip install --upgrade pip setuptools wheel
 ./.venv/bin/pip install cc-ampapi
 ```
+
+## Zabbix Monitoring
+
+Script: `zabbix_amp_status.py`
+
+Launcher:
+
+```bash
+./run-zabbix-amp-status.sh discovery
+./run-zabbix-amp-status.sh controller-json
+./run-zabbix-amp-status.sh instance-json --instance-id <AMP_INSTANCE_ID>
+```
+
+What it does:
+
+- Connects to AMP directly with the same `amp_config.json` or `AMP_URL` / `AMP_USER` / `AMP_PASS`
+- Returns low-level discovery JSON for all non-ADS instances
+- Returns a per-instance JSON payload suitable for Zabbix master item + dependent items
+
+Per-instance JSON fields:
+
+- `instance_running`
+- `instance_state`
+- `app_running`
+- `app_state`
+- `instance_stuck`
+- `active_users`
+- `cpu_percent`
+- `memory_percent`
+- `uptime`
+- `app_status_error`
+
+Recommended Zabbix design:
+
+1. Put `run-zabbix-amp-status.sh` on the Zabbix server/proxy as an external script, or expose it through `UserParameter` on the AMP host.
+2. Create an LLD rule using:
+   - `run-zabbix-amp-status.sh discovery`
+3. For each discovered instance, create one master item:
+   - `run-zabbix-amp-status.sh instance-json --instance-id {#AMP.INSTANCE_ID}`
+4. Create dependent items from the master item with JSONPath:
+   - `$.instance_running`
+   - `$.app_running`
+   - `$.instance_stuck`
+   - `$.active_users`
+   - `$.cpu_percent`
+   - `$.memory_percent`
+   - `$.app_state`
+   - `$.uptime`
+5. Add triggers such as:
+   - Instance stopped: `last(/<template>/amp.instance_running[{#AMP.INSTANCE_ID}])=0`
+   - App stopped while instance is up: `last(/<template>/amp.instance_stuck[{#AMP.INSTANCE_ID}])=1`
+   - App status query error: `length(last(/<template>/amp.app_status_error[{#AMP.INSTANCE_ID}]))>0`
+
+Notes:
+
+- Using direct AMP API calls is the right approach here.
+- The preferred setup is one master JSON item per instance with dependent items, instead of many separate API calls.
+- If Zabbix cannot reach AMP over the network, run the script on the AMP host and have the Zabbix agent execute it locally.
