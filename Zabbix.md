@@ -2,8 +2,8 @@
 
 This repo includes a Zabbix-oriented AMP status collector:
 
-- [`zabbix_amp_status.py`](/home/eal/sources/arksa-sync-repo/zabbix_amp_status.py)
-- [`run-zabbix-amp-status.sh`](/home/eal/sources/arksa-sync-repo/run-zabbix-amp-status.sh)
+- `zabbix_amp_status.py`
+- `run-zabbix-amp-status.sh`
 
 The intended design is:
 
@@ -20,18 +20,18 @@ On the AMP host, make sure these exist and work:
 
 - repo checkout present
 - Python virtualenv present
-- [`amp_config.json`](/home/eal/sources/arksa-sync-repo/amp_config.json) contains valid AMP credentials
+- `amp_config.json` contains valid AMP credentials
 
 Test locally:
 
 ```bash
-/home/eal/sources/arksa-sync-repo/run-zabbix-amp-status.sh discovery
-/home/eal/sources/arksa-sync-repo/run-zabbix-amp-status.sh controller-json
+<repo-path>/run-zabbix-amp-status.sh discovery
+<repo-path>/run-zabbix-amp-status.sh controller-json
 ```
 
 The script reads credentials from:
 
-- [`amp_config.json`](/home/eal/sources/arksa-sync-repo/amp_config.json)
+- `amp_config.json`
 - or environment variables:
   - `AMP_URL`
   - `AMP_USER`
@@ -51,10 +51,12 @@ Typical paths:
 Add:
 
 ```ini
-UserParameter=amp.discovery,/home/eal/sources/arksa-sync-repo/run-zabbix-amp-status.sh discovery
-UserParameter=amp.controller.json,/home/eal/sources/arksa-sync-repo/run-zabbix-amp-status.sh controller-json
-UserParameter=amp.instance.json[*],/home/eal/sources/arksa-sync-repo/run-zabbix-amp-status.sh instance-json --instance-id "$1"
+UserParameter=amp.discovery,<repo-path>/run-zabbix-amp-status.sh discovery
+UserParameter=amp.controller.json,<repo-path>/run-zabbix-amp-status.sh controller-json
+UserParameter=amp.instance.json[*],<repo-path>/run-zabbix-amp-status.sh instance-json --instance-id "$1"
 ```
+
+Replace `<repo-path>` with the actual installation path of this repo on the AMP host.
 
 Restart the agent after editing:
 
@@ -280,7 +282,7 @@ Flow:
 2. The agent runs:
 
 ```bash
-/home/eal/sources/arksa-sync-repo/run-zabbix-amp-status.sh discovery
+<repo-path>/run-zabbix-amp-status.sh discovery
 ```
 
 3. Zabbix receives the discovered AMP instances
@@ -293,7 +295,7 @@ amp.instance.json[{#AMP.INSTANCE_ID}]
 5. The agent runs:
 
 ```bash
-/home/eal/sources/arksa-sync-repo/run-zabbix-amp-status.sh instance-json --instance-id "<instance_id>"
+<repo-path>/run-zabbix-amp-status.sh instance-json --instance-id "<instance_id>"
 ```
 
 6. Zabbix receives one JSON document per instance
