@@ -8,7 +8,7 @@ This repo includes a Zabbix-oriented AMP status collector:
 The intended design is:
 
 - Zabbix agent runs the script on the AMP host
-- one discovery rule finds AMP instances
+- one discovery rule finds ARK AMP instances
 - one master item prototype fetches JSON per instance
 - dependent item prototypes extract fields from that JSON
 
@@ -122,6 +122,16 @@ This returns discovery JSON like:
   ]
 }
 ```
+
+Current behavior:
+
+- discovery is intentionally limited to ARK instances only
+- non-ARK instances such as Valheim are ignored by this collector
+
+Easy toggle:
+
+- in `zabbix_amp_status.py`, set `ARK_ONLY_DISCOVERY = True` to keep ARK-only monitoring
+- set `ARK_ONLY_DISCOVERY = False` to include all non-ADS instances
 
 ## 5. Master Item Prototype
 

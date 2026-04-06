@@ -275,7 +275,7 @@ Launcher:
 What it does:
 
 - Connects to AMP directly with the same `amp_config.json` or `AMP_URL` / `AMP_USER` / `AMP_PASS`
-- Returns low-level discovery JSON for all non-ADS instances
+- Returns low-level discovery JSON for ARK non-ADS instances only
 - Returns a per-instance JSON payload suitable for Zabbix master item + dependent items
 
 Per-instance JSON fields:
@@ -316,4 +316,6 @@ Notes:
 
 - Using direct AMP API calls is the right approach here.
 - The preferred setup is one master JSON item per instance with dependent items, instead of many separate API calls.
+- Current discovery is intentionally limited to ARK instances only.
+- You can change this in `zabbix_amp_status.py` by setting `ARK_ONLY_DISCOVERY = False`.
 - If Zabbix cannot reach AMP over the network, run the script on the AMP host and have the Zabbix agent execute it locally.

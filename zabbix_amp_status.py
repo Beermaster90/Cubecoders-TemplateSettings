@@ -9,6 +9,11 @@ from typing import Any
 from ampapi import AMPControllerInstance, APIParams, Bridge
 from ampapi.modules import ActionResultError
 
+# Easy toggle for Zabbix discovery scope.
+# True: include only ARK instances.
+# False: include all non-ADS instances.
+ARK_ONLY_DISCOVERY = True
+
 
 class SafeAMPControllerInstance(AMPControllerInstance):
     # ampapi's __del__ may invoke asyncio.run() during interpreter teardown.
@@ -43,6 +48,27 @@ def _is_ads_instance(instance: object) -> bool:
     module = str(getattr(instance, "module", ""))
     instance_name = str(getattr(instance, "instance_name", ""))
     return module == "ADS" or instance_name.startswith("ADS")
+
+
+def _is_ark_instance(instance: object) -> bool:
+    instance_name = str(getattr(instance, "instance_name", "")).strip().lower()
+    friendly_name = str(getattr(instance, "friendly_name", "")).strip().lower()
+    module = str(getattr(instance, "module", "")).strip().lower()
+    if "-ark-" in friendly_name or "-template ark-" in friendly_name:
+        return True
+    if "ark" in instance_name:
+        return True
+    if "ark" in friendly_name:
+        return True
+    return "ark" in module
+
+
+def _is_monitorable_instance(instance: object) -> bool:
+    if _is_ads_instance(instance):
+        return False
+    if ARK_ONLY_DISCOVERY and not _is_ark_instance(instance):
+        return False
+    return True
 
 
 def _metric_value(metric: object, *attrs: str, default: Any = None) -> Any:
@@ -116,6 +142,8 @@ async def _get_instance_by_id(ads: SafeAMPControllerInstance, instance_id: str) 
         raise RuntimeError(f"Instance not found: {instance_id}")
     if _is_ads_instance(meta):
         raise RuntimeError(f"Instance is ADS and not monitorable by this check: {instance_id}")
+    if not _is_monitorable_instance(meta):
+        raise RuntimeError(f"Instance is filtered out and is not monitorable by this check: {instance_id}")
     instance_obj = await ads.get_instance(instance_id=instance_id, format_data=True)
     if isinstance(instance_obj, ActionResultError):
         raise RuntimeError(f"get_instance failed: {instance_obj}")
@@ -137,7 +165,7 @@ async def _discovery_json(ads: SafeAMPControllerInstance) -> dict[str, list[dict
     items: list[dict[str, Any]] = []
     instances = await _get_instances(ads)
     for instance in sorted(instances, key=lambda x: str(getattr(x, "instance_name", ""))):
-        if _is_ads_instance(instance):
+        if not _is_monitorable_instance(instance):
             continue
         items.append(
             {
@@ -196,7 +224,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="AMP instance/application status checks for Zabbix.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("discovery", help="LLD discovery JSON for non-ADS instances.")
+    subparsers.add_parser("discovery", help="LLD discovery JSON for ARK non-ADS instances.")
     subparsers.add_parser("controller-json", help="Controller-level status JSON.")
 
     instance_json = subparsers.add_parser("instance-json", help="Per-instance JSON for dependent items.")
