@@ -251,6 +251,7 @@ def _parse_args() -> argparse.Namespace:
 async def main() -> int:
     args = _parse_args()
     ads = await _connect()
+    logged_in = True
     try:
         if args.command == "discovery":
             print(json.dumps(await _discovery_json(ads), separators=(",", ":")))
@@ -275,6 +276,11 @@ async def main() -> int:
             return 0
         raise RuntimeError(f"Unsupported command: {args.command}")
     finally:
+        if logged_in:
+            try:
+                await ads.logout()
+            except Exception:
+                pass
         await ads.__adel__()
 
 

@@ -629,11 +629,13 @@ async def main() -> int:
     Bridge(api_params=params)
 
     ads = SafeAMPControllerInstance()
+    logged_in = False
     try:
         login_result = await ads.login(amp_user=amp_user, amp_password=amp_pass)
         if isinstance(login_result, ActionResultError):
             print(f"Login failed: {login_result}")
             return 2
+        logged_in = True
 
         instances = await ads.get_instances(format_data=True)
         if isinstance(instances, ActionResultError):
@@ -647,6 +649,11 @@ async def main() -> int:
         }
         return await _run_schedule_sync(ads=ads, instances_by_id=instances_by_id, dry_run=args.dry_run)
     finally:
+        if logged_in:
+            try:
+                await ads.logout()
+            except Exception:
+                pass
         await ads.__adel__()
 
 
