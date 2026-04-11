@@ -14,8 +14,39 @@ from ampapi.modules import ActionResultError
 class SafeAMPControllerInstance(AMPControllerInstance):
     # ampapi's __del__ may invoke asyncio.run() during interpreter teardown.
     # We explicitly close the session in main(), so this no-op avoids warning noise.
+    def __init__(self) -> None:
+        super().__init__()
+        self._tracked_instances: list[object] = []
+        self._tracked_instance_ids: set[str] = set()
+
     def __del__(self) -> None:
         return
+
+    async def get_instance(self, instance_id: str, format_data: bool | None = None) -> object:
+        instance_obj = await super().get_instance(instance_id=instance_id, format_data=format_data)
+        tracked_id = str(getattr(instance_obj, "instance_id", "")).strip()
+        if not isinstance(instance_obj, ActionResultError) and tracked_id and tracked_id not in self._tracked_instance_ids:
+            self._tracked_instances.append(instance_obj)
+            self._tracked_instance_ids.add(tracked_id)
+        return instance_obj
+
+    async def close_all(self) -> None:
+        for instance_obj in reversed(self._tracked_instances):
+            try:
+                await instance_obj.logout()
+            except Exception:
+                pass
+            try:
+                await instance_obj.__adel__()
+            except Exception:
+                pass
+        self._tracked_instances.clear()
+        self._tracked_instance_ids.clear()
+        try:
+            await self.logout()
+        except Exception:
+            pass
+        await self.__adel__()
 
 
 def _read_config() -> dict[str, str]:
@@ -650,11 +681,9 @@ async def main() -> int:
         return await _run_schedule_sync(ads=ads, instances_by_id=instances_by_id, dry_run=args.dry_run)
     finally:
         if logged_in:
-            try:
-                await ads.logout()
-            except Exception:
-                pass
-        await ads.__adel__()
+            await ads.close_all()
+        else:
+            await ads.__adel__()
 
 
 if __name__ == "__main__":
