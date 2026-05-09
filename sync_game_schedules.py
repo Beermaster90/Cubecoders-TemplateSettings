@@ -203,9 +203,62 @@ def _is_backup_task(task: object) -> bool:
     return "backup" in method
 
 
+def _is_reboot_task(task: object) -> bool:
+    method_names = [
+        str(_v(task, "task_method_name", "")),
+        str(_v(task, "method_name", "")),
+        str(_v(task, "task_method_id", "")),
+        str(_v(task, "method_id", "")),
+    ]
+    description = str(_v(task, "description", ""))
+    normalized = " ".join(name.lower() for name in method_names if name)
+    description_text = description.lower()
+    return bool(
+        "restart" in normalized
+        or "reboot" in normalized
+        or "restart" in description_text
+        or "reboot" in description_text
+    )
+
+
 def _trigger_has_backup_task(trigger: object) -> bool:
     tasks = _iter_trigger_tasks(trigger)
     return any(_is_backup_task(task) for task in tasks)
+
+
+def _trigger_has_reboot_task(trigger: object) -> bool:
+    if any(_is_reboot_task(task) for task in _iter_trigger_tasks(trigger)):
+        return True
+    trigger_description = str(_v(trigger, "description", "")).lower()
+    return "restart" in trigger_description or "reboot" in trigger_description
+
+
+def _sequential_interval_time(
+    hours: list[int],
+    minutes: list[int],
+    target_index: int,
+    step_minutes: int = 10,
+) -> tuple[list[int], list[int]]:
+    if not minutes:
+        return hours, minutes
+    base_minute = int(minutes[0])
+    base_hour = int(hours[0]) if hours else 0
+    total_offset = (target_index + 1) * step_minutes
+    new_total_minutes = base_hour * 60 + base_minute + total_offset
+    new_hour = (new_total_minutes // 60) % 24
+    new_minute = new_total_minutes % 60
+
+    updated_hours = list(hours)
+    if updated_hours:
+        if len(updated_hours) == 1:
+            updated_hours[0] = new_hour
+        else:
+            hour_offset = (new_hour - base_hour) % 24
+            updated_hours = [(h + hour_offset) % 24 for h in updated_hours]
+
+    updated_minutes = list(minutes)
+    updated_minutes[0] = new_minute
+    return updated_hours, updated_minutes
 
 
 def _distributed_minute(index: int, total: int) -> int:
@@ -414,13 +467,28 @@ async def _sync_schedule_for_target(
         for template_trigger in template_populated:
             if not _is_interval_trigger(template_trigger):
                 continue
+            interval_cfg = await _load_template_interval_details(template_obj, template_trigger)
+            if interval_cfg is None:
+                continue
+            template_minutes = list(interval_cfg.get("minutes", []) or [0])
+            template_hours = list(interval_cfg.get("hours", []) or [0])
+            template_minute = int(template_minutes[0]) if template_minutes else 0
+
+            if _trigger_has_reboot_task(template_trigger):
+                new_hours, new_minutes = _sequential_interval_time(
+                    hours=template_hours,
+                    minutes=template_minutes,
+                    target_index=target_index,
+                )
+                print(
+                    f"- dry-run reboot interval plan: "
+                    f"{_v(template_trigger, 'description', '<unknown>')} -> "
+                    f"{new_hours[0]:02d}:{new_minutes[0]:02d}"
+                )
+                continue
+
             if not _trigger_has_backup_task(template_trigger):
                 continue
-            template_minute = 0
-            interval_cfg = await _load_template_interval_details(template_obj, template_trigger)
-            if interval_cfg is not None:
-                template_minutes = list(interval_cfg.get("minutes", []) or [0])
-                template_minute = int(template_minutes[0]) if template_minutes else 0
             planned_minute = _distributed_minute_avoiding(
                 index=target_index,
                 total=target_total,
@@ -465,7 +533,23 @@ async def _sync_schedule_for_target(
                 template_name=template_name,
                 run_stamp=run_stamp,
             )
-            if _trigger_has_backup_task(template_trigger):
+            if _trigger_has_reboot_task(template_trigger):
+                old_minutes_list = list(interval_cfg.get("minutes", []) or [0])
+                old_hours_list = list(interval_cfg.get("hours", []) or [0])
+                new_hours, new_minutes = _sequential_interval_time(
+                    hours=old_hours_list,
+                    minutes=old_minutes_list,
+                    target_index=target_index,
+                )
+                interval_cfg["hours"] = new_hours
+                interval_cfg["minutes"] = new_minutes
+                print(
+                    f"  - reboot interval adjusted sequentially: "
+                    f"{trigger_desc} "
+                    f"{old_hours_list[0]:02d}:{old_minutes_list[0]:02d} -> "
+                    f"{new_hours[0]:02d}:{new_minutes[0]:02d}"
+                )
+            elif _trigger_has_backup_task(template_trigger):
                 old_minutes_list = list(interval_cfg.get("minutes", []) or [0])
                 old_minute = int(old_minutes_list[0]) if old_minutes_list else 0
                 new_minutes = _distributed_minute_avoiding(
