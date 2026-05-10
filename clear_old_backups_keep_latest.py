@@ -2,6 +2,7 @@
 import argparse
 import asyncio
 import json
+import logging
 import os
 import re
 from datetime import datetime
@@ -9,6 +10,9 @@ from pathlib import Path
 
 from ampapi import AMPControllerInstance, APIParams, Bridge
 from ampapi.modules import ActionResultError
+
+
+logging.getLogger("ampapi").setLevel(logging.CRITICAL)
 
 
 class SafeAMPControllerInstance(AMPControllerInstance):
@@ -89,6 +93,16 @@ def _is_ads_instance(module: object, instance_name: object) -> bool:
     return str(module) == "ADS" or str(instance_name).startswith("ADS")
 
 
+def _is_instance_unavailable(result: object) -> bool:
+    return isinstance(result, ActionResultError) and str(getattr(result, "reason", "")) == "Instance Unavailable"
+
+
+def _format_action_error(result: object) -> str:
+    if _is_instance_unavailable(result):
+        return "instance is down or unavailable"
+    return str(result)
+
+
 def _find_master_template_instance(instances_by_id: dict[str, object]) -> tuple[object | None, str | None]:
     matches: list[object] = []
     for instance in instances_by_id.values():
@@ -135,7 +149,7 @@ async def _discover_group_instances(
         instance_id = getattr(instance, "instance_id", "")
         instance_obj = await ads.get_instance(instance_id=instance_id, format_data=True)
         if isinstance(instance_obj, ActionResultError):
-            print(f"- skip {instance_name}: get_instance failed ({instance_obj})")
+            print(f"- skip {instance_name}: {_format_action_error(instance_obj)}")
             continue
 
         selected[instance_id] = instance_obj
@@ -214,7 +228,10 @@ async def _cleanup_instance_backups(instance_obj: object, apply: bool) -> None:
     backups = await instance_obj.get_backups(format_data=False)
     if isinstance(backups, ActionResultError):
         print(f"\n{friendly} ({name})")
-        print(f"- failed to load backups: {backups}")
+        if _is_instance_unavailable(backups):
+            print("- instance is down or unavailable; skipping backups")
+        else:
+            print(f"- failed to load backups: {backups}")
         return
 
     backup_list = list(backups or [])
